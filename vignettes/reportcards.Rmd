@@ -1,0 +1,1012 @@
+---
+title: "A demonstration of the use the reportcards package"
+author: "Murray Logan"
+output: 
+  rmarkdown::html_vignette:
+    toc: yes
+    number_sections: yes
+vignette: >
+  %\VignetteIndexEntry{reportcards}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+ 
+This vignette illustrates some of the report card analyses described in (REF) using a data set that comes with the
+\code{reportcards} package.  Whilst these data are fabricated (typically the raw data that 
+behind report cards are sensitive and/or have restrictions on their use and distribution), 
+they represent some of the broad structural properties of report card input data.
+
+The broad analysis pipeline described in this vignette is as follows:
+
+1. Import data 
+    - ecological data
+    - hierarchical structure data
+    - guidelines data
+2. Prepare data
+    - add hierarchical structures
+	- merge all ecological data and guidelines
+3. Explore the data (QAQC)
+4. Generate indices
+5. Aggregate and summarise Scores and Grades
+
+# Preparations
+
+We will start by loading the necessary packages.  Obviously, as this is a tutorial on the \code{reportcards} packages,
+we will load this library.  The \code{tidyverse} ecosystem of packages will also be used to help
+with data processing and graphing routines.
+
+```{r setup}
+library(reportcards)
+library(tidyverse)
+```
+ 
+# Explore the built-in fabricated data
+## Ecological monitoring data
+
+The built in fabricated data represents a reasonably standard monitoring data set in wide format.
+Seven characteristics of the marine environment (Seagrass biomass, Chlorophyll-a, 
+Coral cover, pH, Secchi depth, Total Nitrogen and Total Phosphorus) were measured four times per year
+(Feb, May, Aug and Nov) for nine years (2010-2018) from 12 fixed sites strategically positioned throughout a Region (a bay for example).
+As the characteristics (variables) are directly measured properties of the environment, we will refer to
+them as _Measures_.
+
+```{r loadEcoData, results='markdown', eval=TRUE, tidy='styler', tidy.opts=list(scope='spaces')}
+data(reportcardData)
+reportcardData %>% head 
+```
+
+Lets quickly discuss each of the Measures in the context of their roll within ecosystems and the 
+implications that this has on how they might inform a report card.
+
+- TN (total nitrogen) and TP (total phosphorus) are both measures of nutrients and for this example we are going to assume that when 
+  their values exceed a certain level (as defined by water quality guidelines), adverse ecological 
+  processes (such as algal blooms) become more likely.  Along with the guidelines, we might also have some expectations about the
+  best and worst case scenarios for these Measures, and that any values that are less than the best case are considered equivalently
+  good and visa versa for values exceeding the worst case scenarios.
+- Secchi depth is a measure of water clarity that is determined by the depth below the water surface at which a specific disc (called a Secchi disc) becomes 
+  visible from the surface.  Unlike TN and TP, the greater the Secchi depth value, the better (clearer) the water.  
+  Again, there might be expectations (guidelines) as well as best and worst case scenarios by which the observed data can be gauged.
+- pH (acidity/alkalinity) tends to have detrimental ecological impacts at both high and low values.  That is, most ecological processes
+  have an optimal pH range.  Hence, rather than operating in one direction (either higher as in TN, TP  or lower in Secchi depth), pH expectations operate
+  in both directions.  Expectations (Guidelines) are correspondingly a range of values rather than a single value.
+- Cover represents the percent coverage of coral and this therefore bound to the range of 0 to 100.  It is often
+  difficult to represent expectations by simple mathematical relationships.  For this example, we will gauge the condition
+  of coral based on specific condition categories.
+- Chlorophyll-a measures the concentration of chlorophyll pigment in a water sample.  In this example, we will consider high
+  levels of Chlorophyll-a to be an indication of poor water quality and although we might have a guideline value, we dont
+  have best and worst case scenarios.
+- Biomass represents the biomass of seagrass.  As such, the more seagrass the healthier the seagrass meadow.  Expectations (guidelines)
+  and best/worst case scenarios are perhaps present.
+
+At this point, it might be prudent to perform some basic exploratory data analyses in order to
+get a general feel for the data.  As these are fabricated data, this process will help us appreciate the data 
+a little better.  Nevertheless, if these were real data, basic exploratory data analyses are still
+a vital part of the QAQC process.  QAQC diagnostic plots will be discussed later in section [QAQC](#qaqc), so for
+now we will constrain ourselves to simple boxplots for each Measure (variable) over time per site.
+
+We will start with a simple time series of each Measure for each Site.
+
+```{r EDA2, results='markdown', eval=TRUE, fig.width=10, fig.height=7, out.width=690}
+reportcardData %>%
+    gather(key=Measure, value=Value, -Date, -Site) %>%
+    ggplot(aes(y=Value, x=Date)) + 
+    geom_line() +
+    facet_grid(Measure~Site, scales='free') +
+    theme_bw() +
+    theme(axis.text.x=element_text(angle=90, vjust=0.5))
+```
+
+Note that Seagrass Biomass is only recorded from Sites 1, 4 and 5 and Coral Cover measurements are absent from Sites 4 and 5.
+This is intentional.  Typically, these two habitats would not co-occur at the same site as they represent different habitats 
+rather than different properties of the same habitat.  That said, Site 1 does include both Seagrass Biomass and Coral Cover
+and is intended to represent a Site that spans multiple habitats.
+
+There is substantial variability within each time series.  Many of the trends show either a general hump or valley just
+left of the middle of the temporal range.  There is also substantial noise at a fine time scale representing seasonal
+fluctuations.
+
+It might also be worth exploring the general distribution of each Measure within each Site.  For this, we will 
+use violin plots.  Violin plots are similar to boxplots, however they are represent more of the distributional features
+of the underlying data.  We will also overlay the actual data (jitted around the x-axis to allow greater descrimination
+of the density of points along the y-axis.
+
+```{r EDA, results='markdown', eval=TRUE, fig.width=8, fig.height=6, out.width=690, fig.cap='Exploratory data anlysis of the various report card Measures conditional on Site.'}
+reportcardData %>%
+    gather(key=Measure, value=Value, -Date, -Site) %>%
+    ggplot(aes(y=Value, x=Site)) +
+    geom_violin(fill='blue', alpha=0.3) +
+    geom_point(aes(x=as.numeric(Site)), position=position_jitter(width=0.3), alpha=0.5, size=1) +
+    facet_grid(Measure~., scales='free') +
+    theme_bw()     
+```
+
+The above violin plots pool over multiple years.  Typically, report cards are calculated annually and
+thus, we might want to either condition the violin plots on Year (which in this case would get very cluttered), 
+or else produce separate figures for each year.
+To do so necessitates deriving a categorical variable that indicates the year based on the Date field.
+We will explore this, along with other manipulations, further in the [QAQC section](#qaqc) below.
+
+## Hierarchical structure data 
+ 
+The report card scheme facilitated by this package uses hierarchical index aggregations.  Therefore, 
+before we proceed any further, we should establish the Indicator, Spatial and Temporal hierarchies,
+We will start with the temporal hierarchy.  Specifically, we will derive a few different temporal scales 
+including Report Year (annualised temporal cycle), Season (nested within Report Year) and 
+Month (sampling month nested within Season within Report Year).
+
+Typically, report cards are a compilation of annualised data.  However, the annual time frames do
+not necessarily align with calendar years.  More often they are based on either financial years or
+more ecologically meaningful annual cycles - such as the Austral Tropical Water Year (which is from
+October 1 through to September 30).  It is the later definition we will apply to these data.
+
+
+An illustration of the temporal hierarchy associated with the present data is presented in the following
+figure.
+
+```{r hierTemporal, engine='tikz',results='markdown', eval=TRUE, echo=FALSE, out.width=500, fig.cap='Temporal hierarchy, illustrating the cascade of scale from monthly up to annual groupings.'}
+\usetikzlibrary{trees,calc}
+\begin{tikzpicture}[level distance=1.5cm,
+                    level 1/.style={sibling distance=5cm},
+                    level 2/.style={sibling distance=2cm},
+                    level 3/.style={sibling distance=1cm}]
+\node (All) {}
+child {node (ReportYear) {2011}
+    child {node (Season) {Wet}
+        child {node (Month) {Nov}}
+        child {node {Feb}}
+    }
+    child {node {Dry}
+        child {node {May}}
+        child {node {Aug}}
+    }
+}
+child {node {2012}
+    child {node (Season) {Wet}
+        child {node {Nov}}
+        child {node {Feb}}
+    }
+    child {node {Dry}
+        child {node {May}}
+        child {node {Aug}}
+    }
+}
+child {node {...}
+};
+
+%\node [anchor=east] at ($(Month |- All) +(-2cm,0)$) {All:};
+\node [anchor=east] at ($(Month |- ReportYear) +(-2cm,0)$) (S1) {Report Year:};
+\node [anchor=east] at ($(Month |- Season) +(-2cm,0)$) {Season:};
+\node [anchor=east] at ($(Month |- Month) +(-2cm,0)$) {Month:};
+\node [anchor=west] at ($(S1.west |- ReportYear) +(0cm,2.5cm)$) {\bf Temporal hierarchy};
+\end{tikzpicture}
+```
+
+The following table lists some of the temporal processing functions available for defining
+temporal hierarchies from `Date` objects.
+
+| Conversion to               | Function                    | Package     |
+|-----------------------------|-----------------------------|-------------|
+| Abbreviated months          | `format(Date, '%b')`        |             |
+| Numerical months            | `format(Date, '%m')`        |             |
+| Calendar years              | `format(Date, '%Y')`        |             |
+| Austral tropical seasons    | `RC_makeWetDrySeason(Date)` | reportcards |
+| Austral tropical water year | `RC_waterYear(Date)`        | reportcards |
+| Austral financial year      | `RC_financialYear(Date)`    | reportcards |
+
+
+```{r AddTemporalHierarchy, results='markdown', eval=TRUE}
+reportcardData = reportcardData %>%
+    mutate(Month=format(Date, '%b'),
+           Season=RC_makeWetDrySeason(Date),
+           ReportYear=RC_waterYear(Date)) %>%
+    ungroup 
+reportcardData %>% as.data.frame %>% head
+```
+
+Whilst the temporal hierarchy can be largely determined from standard functions (since time is a fairly 
+universal concept), the spatial hierarchy is specific to each application.  For the purpose of illustration,
+we will define three levels of the spatial hierarchy associated with this fabricated example.
+The top level is an entire region (e.g a Bay) in which there are four Zones, each with a number of Sites.
+
+
+```{r hierSpatial, engine='tikz',results='markdown', eval=TRUE, echo=FALSE, out.width=500, fig.cap='Spatial hierarchy, illustrating the cascade of scale from sampling Sites up to the whole Region.'}
+\usetikzlibrary{trees,calc}
+\begin{tikzpicture}[level distance=1.5cm,
+                    level 1/.style={sibling distance=6cm},
+                    level 2/.style={sibling distance=1.5cm}]
+\node (Region) {Region}
+child {node (Zone) {ZoneA}
+    child {node (Site) {Site 1}}
+    child {node {Site 2}}
+    child {node {Site 3}}
+    }
+child {node {ZoneB}
+    child {node {Site 1}}
+    child {node {Site 2}}
+    }
+child {node {...}
+};
+\node [anchor=east] at ($(Site |- Region) +(-2cm,0)$) (S1) {Region:};
+\node [anchor=east] at ($(Site |- Zone) +(-2cm,0)$)  {Zone:};
+\node [anchor=east] at ($(Site |- Site) +(-2cm,0)$) {Site:};
+\node [anchor=west] at ($(S1.west |- Zone) +(0cm,2.5cm)$) {\bf Spatial hierarchy};
+\end{tikzpicture}
+```
+
+The spatial hierarchy is defined in another included data set called `spatial.hier`.
+
+```{r loadSpatial, results='markdown', eval=TRUE}
+data(spatial.hier)
+spatial.hier 
+```
+
+To incorporate this spatial hierarchy, we join it to the `reportcardData`.
+
+```{r JoinSpatial, results='markdown', eval=TRUE}
+reportcardData = reportcardData %>%
+    left_join(spatial.hier)
+reportcardData %>% as.data.frame %>% head 
+```
+
+Similarly, the Indicator hierarchy is defined in another included data set `indicator.hier`.
+The hierarchy is as follows.
+
+```{r hierMeasure, engine='tikz',results='markdown', eval=TRUE, echo=FALSE, out.width=500, fig.cap='Indicator hierarchy, illustrating the cascade of scale from the observable variables (Measures) up to Indicators.'}
+\usetikzlibrary{trees,calc}
+\begin{tikzpicture}[level distance=1.5cm,
+                    level 1/.style={sibling distance=6cm},
+                    level 2/.style={sibling distance=2cm}]
+\node (Component) {Environental}
+child {node (Indicator) {Water Quality}
+    child {node (Subindicator) {Nutrients}
+        child {node (Measure) {TN}}
+        child {node {TP}}
+    }
+    child {node {Productivity}
+        child {node {Chla}}
+    }
+    child {node {Clarity}
+        child {node {Secchi}}
+    }
+    child {node {Physical}
+        child {node {pH}}
+    }
+}
+child {node {Habitats}
+    child {node {Seagrass}
+        child {node {Biomass}}
+    }
+    child {node {Coral}
+        child {node {Cover}}
+    }
+};
+
+\node [anchor=east] at ($(Measure |- Component) +(-2cm,0)$) {Component:};
+\node [anchor=east] at ($(Measure |- Indicator) +(-2cm,0)$) {Indicator:};
+\node [anchor=east] at ($(Measure |- Subindicator) +(-2cm,0)$) (S1) {Subindicator:};
+\node [anchor=east] at ($(Measure |- Measure) +(-2cm,0)$) {Measure:};
+\node [anchor=west] at ($(S1.west |- Component) +(0cm,1cm)$) {\bf Measure hierarchy};
+\end{tikzpicture}
+```
+
+Notice that there is not an even number of items that make up the two Indicators.  Water Quality
+is represented by four Subindicators, where as Habitats is only represented by two Subindicators.
+Furthermore, whereas the Nutrients Subindicator consists of two Measures (TN and TP), all others 
+comprise only a single Measure.
+
+```{r loadMeasure, results='markdown', eval=TRUE}
+data(indicator.hier)
+indicator.hier 
+```
+
+Before we can join this to the \code{reportcardData}, we must first gather
+the \code{reportcardData} into long format.
+
+```{r joinMeasure, results='markdown', eval=TRUE}
+reportcardData = reportcardData %>%
+    gather(key=Measure, value=Value, Biomass, Chla, Cover, pH, Secchi, TN, TP) %>%
+    left_join(indicator.hier) 
+reportcardData %>% as.data.frame %>% head
+```
+
+## Guidelines data
+
+Many report card index formulations gauge the observed values against some form of guideline or
+threshold values.  Since the form of the guidelines (single value, range of values etc)
+may differ from Measure (variable) to Measure and these values might also vary from Site to Site,
+it is convenient to be able to supply these via an external file (rather than hard-code them in).  
+This package comes with a fabricated guidelines data frame (`guidelines`) that represents a range 
+of guideline definitions.
+
+| Property       | Description                                        | Applies to index formulation      |
+|----------------|----------------------------------------------------|-----------------------------------|
+| GL             | Single point guideline/reference/threshold value   | Binary, MAMP, fsMAMP, HSAMP, LAMP |
+| Lower, Upper   | Guideline range (useful for expressing a range)    | Binary, MAMP, fsMAMP, HSAMP, LAMP |
+| lBound, uBound | User defined lower and upper index scaling bounds) | HSAMP                             |
+| DOF            | Direction of Failure                               | Binary, MAMP, fsMAMP, HSAMP, LAMP |
+| Cuts           | Specific Break=Score pairs                         | Chart                             |
+
+
+```{r loadGLData, results='markdown', eval=TRUE, tidy='styler', tidy.opts=list(scope='spaces')}
+data(guidelines)
+guidelines %>% head
+guidelines %>% glimpse 
+```
+
+<!-- ## Data preparation -->
+Merge the ecological data and guidelines/thresholds together into a single data frame.
+
+```{r Join, results='markdown', eval=TRUE, tidy='styler', tidy.opts=list(scope='spaces')}
+reportCard = reportcardData %>%
+    left_join(guidelines)
+reportCard %>% as.data.frame %>% head  
+```
+
+# QAQC {#qaqc}
+
+Now that the data are complete, we are in a position to explore a more thorough set of 
+exploratory data analyses and QAQC routines.
+
+There are numerous effective ways to explore the integrity of data.  For example, we could inspect for outliers,
+we could inspect for missing data and we could inspect the overal distribution so as to get a feel for the 
+spread of the data.  The time series plot and violin plots above are all part of this process.
+
+In producing QAQC plots, it is important to be able to identify individual records so that if any of the 
+observations are in any way suspicious, we can easily locate the record within the underlying data frame.
+One way to do this is to represent each observation on a graph with a number corresponding to its
+record number (row number in the data frame).  However, as the number of observations increases, the graphical
+labels increase in length, thereby increasing the changes of overlapping labels (difficult to read) and 
+difficult to determine the coordinate the label represents.
+
+Arguably a better scheme, is to be able to identify each record based on its spatial and temporal location.
+This can be achieved by using axes or point labels (or a combination of both) that represent the spatial/temporal
+units.  For example, one of the axes could represent the sites (in the typical fixed site sampling design) and
+the labels could represent broad temporal units (such as the month of sampling or the visit number).
+
+Although report cards often include some form of time series that portrays the temporal trends in scores (and/or Grades), these
+are typically built up incrementally from annual report card calculations.  Each annual report card tends to 
+focus primarily on the last 12 months of data.  Correspondingly, the QAQC typically concentrates on the last
+12 months of data.
+
+## Identifying gaps in the data
+
+Provided the data are collected periodically from fixed sites (as is the case with the current fabricated data),
+we can produce a plot that will quickly identify gaps in the data.  The current data, were collected from a 
+design in which each of seven Measures were recorded from 12 Sites every four months (corresponding to November,
+February, May and August).  Thus we can identify missing values by comparing the actual data to a full grid
+of each Measure/Site/Month combination.
+
+For the current example, we will inspect for gaps in the 2018 year.
+
+```{r QAQC1, results='markdown', eval=TRUE, fig.width=10, fig.height=7, out.width=690}
+df = reportCard %>% filter(ReportYear==2018) 
+full = with(df, expand.grid(Site=factor(unique(Site)),
+                            Month=unique(Month),
+                            Measure=unique(Measure))) %>%
+    mutate(Measure=as(Measure, Class=class(reportCard$Measure)))
+    print(head(full))
+df = df %>% full_join(full) %>%
+    mutate(Missing=ifelse(is.na(Value),TRUE,FALSE)) %>%
+    arrange(Date) %>% 
+    mutate(Month=factor(Month, unique(Month)))
+
+df %>%
+    ggplot(aes(y=Site, x=Month)) +
+    geom_point(aes(color=Missing), show.legend = FALSE) +
+    facet_grid(Zone~Subindicator+Measure, space='free', scale='free', as.table=FALSE) + 
+    scale_color_manual(breaks=c(FALSE,TRUE), values=c('black','red'), labels=c(FALSE,TRUE)) +
+    theme_classic(10)+
+    theme(plot.margin=unit(c(0,0,0,0),'lines'),
+          axis.ticks.length=unit(0.1,'lines'),
+          panel.background=element_rect(color='black', fill=NA))
+```
+
+In the above figure, the sites and sampling visits define the y and x axes respectively and the
+Measures (variables) and Zones define the x and y axes panels respectively.  The red points indicate missing data.
+It is clear that there are no Seagrass Biomass data from Sites 2, 3, 6--12 and there are no Coral
+Cover data from Sites 4 and 5.  Presumably, most of the sites are either seagrass meadows or coral reefs 
+(Site 1 being an exception, having both seagrass and coral).  Keep in mind, these are fabricated data.
+These 'missing' observations might not actually be considered missing.
+
+More enlightening is the missing 
+observation for TN from Site 6 on the February visit.  This might not be expected and it might highlight a need to
+review the data carefully to understand and explain this gap.  Hence, such as 
+figure helps to identify all gaps in the data (expected and unexpected).
+
+A similar spatio-temporal figure could be used to highlight other features of the individual records (such as
+extreme values etc).
+
+## Exploring the spread of data
+
+A useful way to visualise the distributional properties of data collected from fixed sites at broadly regular time 
+intervals, is to plot the spatial units as categories on the y-axis, the measured variables on the x-axis and
+denote each observation by its visit number within the focal year.
+
+When plotting the data, it is often useful to inspect the values in the context of any guidelines and other parameters
+of the intended index formulations (see [Index calculations](#indices)).  To do so, we can annotate the graphics with lines and bands representing these
+parameters.  Index formulation will be discussed in section [Index calculations](#indices), however, for now, we will just assume that we are going to apply
+the following index formulations:
+
+- fsMAMP (scaled capped Modified Amplitude) with a fold=2 (capping defined as half and twice guideline value) for Chlorophyll-a
+- HSMAP (Hyperbolic Sine Amplitude) with for TP, TN, Biomass and Secchi depth
+- HSAMP (Hyperbolic Sine Amplitude) with for pH (Direction of Failure in Both directions)
+- Chart for Cover
+
+For the current example, we will represent the temporal units by visit number within the 2018 year.
+The following code block is used:
+
+- to filter the time series to just the 2012 Reporting year
+- create numerical versions of the Sites within the guidelines data frame to facilitate annotating with index parameters
+- define annotation bands associated with different indices
+
+```{r QAQCprep2, results='markdown', eval=TRUE}
+df = reportCard %>% filter(ReportYear==2018)
+##Round Dates to the month of sampling
+df = df %>% mutate(Visit = lubridate:::floor_date(Date,'month'),
+                   Visit = as.numeric(as.factor(as.character(Visit))))
+
+GL = df %>%
+    mutate(nSite=as.numeric(Site)) %>%
+    group_by(Zone) %>% 
+    mutate(nSite=nSite-min(nSite) + 1) %>%
+    ungroup %>% 
+    dplyr::select(GL, DOF, Lower, Upper, lBound, uBound, Cuts, Measure, nSite, Zone) %>% distinct
+
+
+GL = GL %>%
+    mutate(fold = ifelse(Measure=='Chla', 2, NA),
+           lGL = ifelse(DOF=='B', Lower, NA),
+           uGL = ifelse(DOF=='B', Upper, NA),
+           LWR = ifelse(Measure=='Chla' & DOF!='B', GL/fold,
+                 ifelse(Measure=='Chla' & DOF=='B', lGL/fold,
+                 ifelse(Measure %in% c('TP','TN','Biomass','Secchi','pH'), lBound,
+                        RC_min_cut(Cuts)
+                        ))),
+           UPR = ifelse(Measure=='Chla' & DOF!='B', GL*fold,
+                 ifelse(Measure=='Chla' & DOF=='B', lGL*fold,
+                 ifelse(Measure %in% c('TP','TN','Biomass','Secchi','pH'), uBound,
+                        RC_max_cut(Cuts)
+                        )))
+           )
+
+```
+
+Now for the plot.
+
+```{r QAQC2, results='markdown', eval=TRUE, fig.width=10, fig.height=7, out.width=690}
+df %>% full_join(GL) %>%
+    mutate(Outlier = ifelse(is.na(LWR) | (Value>LWR & Value<UPR), FALSE, TRUE)) %>% 
+    ggplot() +
+    geom_blank(aes(y=Site, x=Value)) +
+    geom_rect(data=GL, aes(xmin=LWR, xmax=UPR, ymin=nSite-0.5, ymax=nSite+0.5),
+              fill='blue', alpha=0.1) +
+    geom_rect(data=GL, aes(xmin=lGL, xmax=uGL, ymin=nSite-0.5, ymax=nSite+0.5),
+              fill='blue', alpha=0.5) +
+    geom_vline(data=GL, aes(xintercept=GL), color='blue') +
+    geom_text(aes(y=Site, x=Value,label=Visit, color=Outlier), size=3, show.legend=FALSE) +
+    facet_grid(Zone~Measure, scales='free', space='free_y', as.table=FALSE) +
+    scale_color_manual(breaks=c(FALSE,TRUE), values=c('black','red')) +
+    theme_classic(10)+
+    theme(plot.margin=unit(c(0,0,0,0),'lines'),
+          axis.ticks.length=unit(0.1,'lines'),
+          panel.background=element_rect(color='black', fill=NA))
+```
+
+In the above figure, the dark blue vertical lines (or bands in the case of pH which has an
+optimum range rather than point guideline) represent the guideline value associated with
+each Site (y-axis) and Measure (y-axis panels).  Lighter blue bands indicate the bounds
+of index scaling (values outside the bounds will be assigned minimum or maximum scores).
+The observed values are numbered according to their visit number (within the focal Report Year)
+and are coloured according to whether they are within (black) or outside (red) the index scaling
+bounds.
+
+It is clear (for example) that Biomass values in visits 3 and 4 (May and August) are higher
+than the index scaling bounds and that all observations for Secchi depth in Sites 4 and 5
+were below the corresponding index scaling bounds.
+
+
+# Index calculations {#indices}
+
+The following table provides an overview of the major index types supported by this package.
+
+
+: An overview of the major index formulations and the defining required function arguments.
+
++---------------------------------------+-------------------------------------------------------------------------+
+| Index                                 | Required information (arguments)                                        |
++=======================================+=========================================================================+
+| Binary\                               | - Raw data (`x`)\                                                       |
+| (type='Binary')                       | - Guidelines (`GL`)\                                                    |
+|                                       | - Direction of Failure (`DOF`)\                                         |
+|                                       | - Guideline range for `DOF='B'` (`Lower`/`Upper`)                       |
++---------------------------------------+-------------------------------------------------------------------------+
+| MAMP\                                 | - Raw data (`x`)\                                                       |
+| (type='MAMP')                         | - Guidelines (`GL`)\                                                    |
+|                                       | - Direction of Failure (`DOF`)\                                         |
+|                                       | - Guideline range for `DOF='B'` (`Lower`/`Upper`)                       |
++---------------------------------------+-------------------------------------------------------------------------+
+| fsMAMP\                               | - Raw data (`x`)\                                                       |
+| (type='MAMP',capped=TRUE,scaled=TRUE) | - Guidelines (`GL`)\                                                    |
+|                                       | - Direction of Failure (`DOF`)\                                         |
+|                                       | - Capping and scaling limits as a multipler of the guidelines (`fold`)\ |
+|                                       | - Guideline range for `DOF='B'` (`Lower`/`Upper`)                       |
++---------------------------------------+-------------------------------------------------------------------------+
+| HSAMP\                                | - Raw data (`x`)\                                                       |
+| (type='HSMAP')                        | - Guidelines (`GL`)\                                                    |
+|                                       | - Direction of Failure (`DOF`)\                                         |
+|                                       | - Tuning paramters (`T`)                                                |
+|                                       | - Guideline range for `DOF='B'` (`Lower`/`Upper`)\                      |
+|                                       | - Capping and scaling bounds (`lbound`, `uBound`)                       |
++---------------------------------------+-------------------------------------------------------------------------+
+| Chart\                                | - Raw data (`x`)\                                                       |
+| (type='Chart')                        | - Break=Score value pairs (`Cuts`)                                      |
++---------------------------------------+-------------------------------------------------------------------------+
+
+
+We can use the `RC_visualize()` function to visualise the response curves of the various index types.  I have 
+augmented each of the following visualisations with some theming alterations.  Keep in mind that these
+visualisations are not based on the current data or guidelines in any way.  Instead they represent the general
+form that the response curves take.
+
+```{r Visualise, results='markdown', eval=TRUE, fig.width=6, fig.height=1.5, out.width=600, warning=FALSE}
+RC_visualize_indices(type='Binary') +
+    theme_bw() +
+    theme(axis.title.x=element_blank(), axis.text.x=element_blank())
+RC_visualize_indices('WCS') +
+    theme_bw() +
+    theme(axis.title.x=element_blank(), axis.text.x=element_blank())
+RC_visualize_indices('MAMP') +
+    theme_bw() +
+    theme(axis.title.x=element_blank(), axis.text.x=element_blank())
+RC_visualize_indices('MAMP', scaled=TRUE, capped=TRUE) +
+    theme_bw() +
+    theme(axis.title.x=element_blank(), axis.text.x=element_blank())
+RC_visualize_indices('HSAMP') +
+    theme_bw() +
+    theme(axis.title.x=element_blank(), axis.text.x=element_blank())
+RC_visualize_indices('Chart') +
+    theme_bw() + 
+    theme(axis.title.x=element_blank(), axis.text.x=element_blank())   
+```
+
+If we want to explore a particular index formulation response curve that is more specific for the data range and guidelines associated
+with a particular Measure, we can supply a few more parameters.  For example, we couple explore a couple of 
+options (fsMAMP and HSAMP) for Chlorophyll-a by supplying parameters based on the expected range of Chlorophyll-a values and the 
+intended guidelines.
+
+```{r Visualise1, results='markdown', eval=TRUE, fig.width=6, fig.height=2, out.width=600, warning=FALSE}
+RC_visualize_indices('MAMP', scaled=TRUE, capped=TRUE, min=0.01, max=1.5, GL=0.5, fold=2,
+                     Lower=0.4, Upper=0.6) +
+    theme_bw()
+
+RC_visualize_indices('HSAMP', min=0.01, max=1.1, GL=0.5, Lower=0.4, Upper=0.6,
+                     lBound=0.2, uBound=0.9, T=2) +
+    theme_bw() 
+```
+ 
+By way of example, we will generate the following indices on the fabricated data:
+
+- fsMAMP (scaled capped Modified Amplitude) with a fold=2 for Chlorophyll-a
+- HSMAP (Hyperbolic Sine Amplitude) with T=2 for TP and TN
+- HSAMP (Hyperbolic Sine Amplitude) with T=3 for Biomass and Secchi depth
+- HSAMP (Hyperbolic Sine Amplitude) with T=3 for pH
+- Chart for Cover
+
+Note that the final report year is incomplete.  The last 2018 record is actually part of 
+the 2019 report year. Hence, we will also limit the data to only the full report years (<= 2018).
+
+```{r Indices, results='markdown', eval=TRUE, tidy='styler', tidy.opts=list(scope='spaces')}
+reportCard.idx = reportCard %>%
+    filter(ReportYear <= 2018) %>%
+    mutate(Score=case_when(
+               Measure %in% c('Chla') ~ RC_index(x=Value, GL=GL, fold=2, DOF=DOF,
+                                                 type='MAMP', capped=TRUE, scaled=TRUE),
+               Measure %in% c('TN', 'TP') ~ RC_index(x=Value, GL=GL, lBound=lBound,
+                                                     uBound=uBound, T=2, DOF=DOF,
+                                                     type='HSAMP'),
+               Measure %in% c('Biomass', 'Secchi') ~ RC_index(x=Value, GL=GL,
+                                                              lBound=lBound, uBound=uBound,
+                                                              T=3, DOF=DOF, type='HSAMP'),
+               Measure %in% c('pH') ~ RC_index(x=Value, Lower=Lower, Upper=Upper,
+                                               lBound=lBound, uBound=uBound, T=3, DOF=DOF,
+                                               type='HSAMP'),
+               Measure %in% c('Cover') ~ RC_index(x=Value, Cuts=Cuts, type='Chart')
+       )
+    ) 
+reportCard.idx %>% as.data.frame %>% head  
+```
+
+<!--
+For this demonstration, we will focus on fsMAMP.  Consequently, we will remove
+the other indices and rename fsMAMP to Scores.-->
+
+```{r rename, results='markdown', echo=FALSE, eval=FALSE, tidy='styler', tidy.opts=list(scope='spaces')}
+reportCard.idx = reportCard.idx %>% 
+    dplyr::select(everything(), -Binary, -HSAMP, Score=fsMAMP)
+reportCard.idx %>% as.data.frame %>% head 
+```
+
+
+# Aggregation
+
+This indices are calculated on the indivual records.  However, we are usually more interested
+in higher level aggregations.  In the following sections, we will progressively aggregate the 
+scores from the level of individual records up to annual Zone level indicator scores.  In doing
+so, we will aggregate by geometric means.  Nevertheless, different summarization functions 
+could be used instead.  For example, an aggregated score could be based on the minimum of a set
+of scores rather than a mean.
+
+The aggregation routines all have the potential to allow weights to be applied so as to define the individual influence
+of each item to be aggregated.  However, for the current example, we will apply constant weights of 1. 
+
+In this example, there are three hierarchies (Indicator, Spatial and Temporal) over which to aggregate.
+Furthermore, we are not going to fully traverse each of the hierarchies.  Indeed, we will start by aggregating
+from montly to annual data (along the Temporal hierarchy), before switching to aggregating from Measures 
+to Indicators (along the Indicator hierarchy) and then finally, we will aggregate from Sites to Region 
+(along the Spatial hierarchy).  This progression across multiple aggregation hierarchies can be difficult to follow  
+so to help orientate us, we will provide an illustration that indicates the data frame column (red font) involved
+in each aggregation.
+
+The following table, describes the various aggregation functions (and their arguments) available within the 
+`reportcards` package.
+
+: Aggregation functions available in the `reportcards` package.
+
++--------------------------+---------------------------+----------------------------------------------------+
+| Routine                  | Function                  | Arguments                                          |
++==========================+===========================+====================================================+
+| Simple aggregation       | `RC_aggregate()`          | `grouping_cols`: variables not to aggregate over\  |
+|                          |                           | `fun` : summary function to apply                  |
+|                          |                           | `gradetype` : grade type conversion
++--------------------------+---------------------------+----------------------------------------------------+
+| Bootstrap accumulation   | `RC_boot_accumulate()`    | `seed`: a random seed\                             |
+|                          |                           | `size`: number of bootstrap samples\               |
+|                          |                           | `grouping_cols`: variables not to aggregate over\  |
+|                          |                           | `fun` : summary function to apply                  |
++--------------------------+---------------------------+----------------------------------------------------+
+| Bootstrap aggregation    | `RC_boot_aggregation()`   | `seed`: a random seed\                             |
+|                          |                           | `size`: number of bootstrap samples\               |
+|                          |                           | `grouping_cols`: variables not to aggregate over\  |
+|                          |                           | `over` : variable to aggregate over\               |
+|                          |                           | `fun` : summary function to apply                  |
++--------------------------+---------------------------+----------------------------------------------------+
+
+## Aggregate over Months within ReportYear/Site/Measure
+
+```{r L1, engine='tikz',results='markdown', eval=TRUE, echo=FALSE, out.width=600}
+\usetikzlibrary{calc}
+\tt
+\begin{tikzpicture}
+\node [draw] (L1) {ReportYear $\vert$ \textcolor{red}{Month} $\vert$ Zone $\vert$ Site $\vert$ Component $\vert$ Indicator $\vert$ Subindicator $\vert$ Measure};
+\node [anchor=north west, draw] at ($(L1.south west) +(0,-1cm)$) (L2) {ReportYear $\vert$ Zone $\vert$ Site $\vert$ Component $\vert$ Indicator $\vert$ Subindicator $\vert$ Measure};
+\draw [->, thick] (L1.south) -- ($(L1.south |- L2.north)$);
+\end{tikzpicture}
+```
+
+To perform simple a simple aggregation of data from Monthly to Annual, we can use the `RC_aggregate()` function.
+In addition to aggregating, this function also uses the aggregated Scores to generate associated Grades (letters A-E
+representing Very Good through to Very Poor).  There are numerous Score to Grade conversion schemes, we will use
+the Uniform conversion which breaks the possible range of Scores (0-1) into five equal increments.
+
+```{r AggReportYear_Zone_Measure.simple, results='markdown', eval=TRUE, tidy='styler', tidy.opts=list(scope='spaces')}
+reportyear.site.measure = reportCard.idx %>%
+    mutate(Weight=1) %>% 
+    RC_aggregate(grouping_cols=c('ReportYear', 'Zone', 'Site', 'Component', 'Indicator',
+                                 'Subindicator', 'Measure'),
+                 gradetype='Uniform')
+reportyear.site.measure %>% head 
+```
+
+To inject uncertainty into these calculations, we can employ bootstrapping. However, in order to propagate uncertainty throughout the aggregation
+hierarchy, there needs to be some variability captured in the data.  As there is only a 
+single observation per space/time/variable, there is currently no variability to propagate.
+Bootstrap aggregation works by resampling distributions.  If the distributions comprise 
+only a single value, there is no variability in the aggregations.
+
+Most report cards are delivered annually and it is common for guideline values to be
+applicable to annual averages.  Hence, we will first accumulate all the monthly observations
+(within each Report Year) into distribution (per Report Year/Zone/Measure).  This will 
+give us the uncertainty base from which to begin the aggregation hierarchy.
+
+Propagating uncertainty via bootstrapping is a brute force operation.  Rather than
+make use of statistical axioms (and accepting the various associated assumptions - many
+of which are unlikely to be satisfied with indexed data), bootstrapping builds up
+large stores of resampled data. On the one hand, bootstrapping is free of many distributional
+assumptions and is robust to unbalanced designs, however it is more computationally expensive
+(as the calculations need to be performed repeatedly and the results accrued).  The more
+resamples are performed, the more accurately the underlying distributions will be estimated,
+yet the more computationally expensive the bootstrapping will be.  For this particular
+example, we will set the number of bootstrap samples (size) to 100.  This is likely to 
+be insufficient for real applications and is only applied here to keep the computational
+load low when demonstrating the techniques.
+
+Furthermore, bootstrapping is an inherently stochastic process and therefore will yield different
+outcomes each time it is performed.  Obviously this can be mitigated by having very large resample sizes,
+however, this will incur very large computational burdens.  By specifying the seed to use
+in the quasi random number generation processes, we can ensure that the bootsrapping is 
+repeatable.  For these demonstrations, we will fix the random seed to 123.
+
+```{r AggReportYear_Site_Measure.boot, cache=TRUE, results='markdown', eval=TRUE, tidy='styler', tidy.opts=list(scope='spaces')}
+reportyear.site.measure.boot = reportCard.idx %>%
+    mutate(Weight=1) %>% 
+    RC_boot_accumulate(seed=123, size=100,
+                       grouping_cols=c('ReportYear', 'Zone', 'Site', 'Component',
+                                       'Indicator', 'Subindicator', 'Measure'))
+reportyear.site.measure.boot$sum %>% as.data.frame %>% head
+```
+
+We can now join the upper and lower quantiles (95% CI) from the bootsrapped aggregation to the
+simple hierarchical aggregation.
+
+```{r AggReportYear_Site_Measure, results='markdown', eval=TRUE, tidy='styler'}
+reportyear.site.measure = reportyear.site.measure %>%
+    full_join(reportyear.site.measure.boot$sum)
+reportyear.site.measure %>% as.data.frame %>% head 
+```
+
+We can now visualise the scores as separate time series for each Measure and Site combination.
+To help with interpretation, we can also colour the points according to their associated
+grades using a traffic light colour palette.  The traffic light colours are provided by the 
+`RC_reportCardColors` vector.
+
+```{r TS1, results='markdown', eval=TRUE, fig.width=10, fig.height=10, out.width=690}
+reportyear.site.measure %>%
+    filter(!is.na(Score)) %>%
+    ggplot(aes(y=Score, x=lubridate::date_decimal(ReportYear))) +
+        geom_linerange(aes(ymin=Lower, ymax=Upper)) +
+    geom_line() + 
+    geom_point(aes(color=Grade), size=3) +
+    scale_color_manual(breaks=LETTERS[1:5], values=RC_reportCardColors, limits=LETTERS[1:5]) +
+    scale_x_datetime('Report Year') +
+    scale_y_continuous(limits=c(0,1)) +
+    facet_grid(Zone+Site~Subindicator+Measure, space='free') +
+    theme_bw(10) +
+    theme(plot.margin=unit(c(0,0,0,0),'lines'),
+          axis.ticks.length=unit(0.1,'lines'),
+          axis.text.x=element_text(angle=90, vjust=0.5),
+          panel.background=element_rect(color='black', fill=NA))
+```
+
+
+
+### Aggregate over Measures within ReportYear/Site/Subindicator
+
+```{r L2, engine='tikz',results='markdown', eval=TRUE, echo=FALSE, out.width=600}
+\usetikzlibrary{calc}
+\tt
+\begin{tikzpicture}
+\node [draw] (L1) {ReportYear $\vert$ \textcolor{red}{Month} $\vert$ Zone $\vert$ Site $\vert$ Component $\vert$ Indicator $\vert$ Subindicator $\vert$ Measure};
+\node [anchor=north west, draw] at ($(L1.south west) +(0,-1cm)$) (L2) {ReportYear $\vert$ Zone $\vert$ Site $\vert$ Component $\vert$ Indicator $\vert$ Subindicator $\vert$ \textcolor{red}{Measure}};
+\draw [->, thick] (L1.south) -- ($(L1.south |- L2.north)$);
+\node [anchor=north west, draw] at ($(L2.south west) +(0,-1cm)$) (L3) {ReportYear $\vert$ Zone $\vert$ Site $\vert$ Component $\vert$ Indicator $\vert$ Subindicator};
+\draw [->, thick] (L2.south) -- ($(L2.south |- L3.north)$);
+\end{tikzpicture}
+```
+ 
+```{r AggReportYear_Site_Subindicator.simple, results='markdown', eval=TRUE, tidy='styler'}
+reportyear.site.subindicator = reportyear.site.measure %>% 
+    mutate(Weight=1) %>% 
+    RC_aggregate(grouping_cols=c('ReportYear','Zone', 'Site','Component',
+                                 'Indicator','Subindicator'))
+reportyear.site.subindicator %>% as.data.frame %>% head
+```
+
+```{r AggReportYear_Site_Subindicator.boot, cache=TRUE,results='markdown', eval=TRUE, tidy='styler', tidy.opts=list(scope='spaces')}
+reportyear.site.subindicator.boot = reportyear.site.measure.boot$dist %>% 
+    mutate(Weight=1) %>% 
+    RC_boot_aggregate(seed=123, size=100,
+                      grouping_cols=c('ReportYear', 'Zone', 'Site', 'Component',
+                                       'Indicator', 'Subindicator'),
+                      over='Measure')
+reportyear.site.subindicator.boot$sum %>% as.data.frame %>% head 
+```
+
+```{r AggReportYear_Site_Subindicator, results='markdown', eval=TRUE, tidy='styler'}
+reportyear.site.subindicator = reportyear.site.subindicator %>% 
+    full_join(reportyear.site.subindicator.boot$sum)
+reportyear.site.subindicator %>% as.data.frame %>% head
+```
+
+```{r TS2, results='markdown', eval=TRUE, fig.width=10, fig.height=10, out.width=690}
+reportyear.site.subindicator %>%
+    filter(!is.na(Score)) %>%
+    ggplot(aes(y=Score, x=lubridate::date_decimal(ReportYear))) +
+    geom_linerange(aes(ymin=Lower, ymax=Upper)) +
+    geom_line() + 
+    geom_point(aes(color=Grade), size=3) +
+    scale_color_manual(breaks=LETTERS[1:5], values=RC_reportCardColors, limits=LETTERS[1:5]) +
+    scale_x_datetime('Report Year') +
+    scale_y_continuous(limits=c(0,1)) +
+    facet_grid(Zone+Site~Indicator+Subindicator, space='free') +
+    theme_classic(10) +
+    theme(plot.margin=unit(c(0,0,0,0),'lines'),
+          axis.ticks.length=unit(0.1,'lines'),
+          axis.text.x=element_text(angle=90, vjust=0.5),
+          panel.background=element_rect(color='black', fill=NA))
+```
+
+
+## Aggregate over Subindicators within ReportYear/Site/Indicator
+
+```{r L3, engine='tikz',results='markdown', eval=TRUE, echo=FALSE, out.width=600}
+\usetikzlibrary{calc}
+\tt
+\begin{tikzpicture}
+\node [draw] (L1) {ReportYear $\vert$ Month $\vert$ Zone $\vert$ Site $\vert$ Component $\vert$ Indicator $\vert$ Subindicator $\vert$ Measure};
+\node [anchor=north west, draw] at ($(L1.south west) +(0,-1cm)$) (L2) {ReportYear $\vert$ Zone $\vert$ Site $\vert$ Component $\vert$ Indicator $\vert$ Subindicator $\vert$ Measure};
+\draw [->, thick] (L1.south) -- ($(L1.south |- L2.north)$);
+\node [anchor=north west, draw] at ($(L2.south west) +(0,-1cm)$) (L3) {ReportYear $\vert$ Zone $\vert$ Site $\vert$ Component $\vert$ Indicator $\vert$ Subindicator};
+\draw [->, thick] (L2.south) -- ($(L2.south |- L3.north)$);
+\node [anchor=north west, draw] at ($(L3.south west) +(0,-1cm)$) (L4) {ReportYear $\vert$ Zone $\vert$ Site $\vert$ Component $\vert$ Indicator};
+\draw [->, thick] (L3.south) -- ($(L3.south |- L4.north)$);
+\end{tikzpicture}
+```
+
+```{r AggReportYear_Site_Indicator.simple, results='markdown', eval=TRUE, tidy='styler'}
+reportyear.site.indicator = reportyear.site.subindicator %>% 
+    mutate(Weight=1) %>% 
+    RC_aggregate(grouping_cols=c('ReportYear','Zone', 'Site','Component',
+                                 'Indicator'))
+reportyear.site.indicator %>% as.data.frame %>% head 
+```
+
+```{r AggReportYear_Site_Indicator.boot, cache=TRUE, results='markdown', eval=TRUE, tidy='styler', tidy.opts=list(scope='spaces')}
+reportyear.site.indicator.boot = reportyear.site.subindicator.boot$dist %>% 
+    mutate(Weight=1) %>% 
+    RC_boot_aggregate(seed=123, size=100,
+                      grouping_cols=c('ReportYear', 'Zone', 'Site', 'Component',
+                                       'Indicator'),
+                      over='Subindicator')
+reportyear.site.indicator.boot$sum %>% as.data.frame %>% head 
+```
+
+```{r AggReportYear_Site_Indicator, results='markdown', eval=TRUE, tidy='styler'}
+reportyear.site.indicator = reportyear.site.indicator %>%  
+    full_join(reportyear.site.indicator.boot$sum)
+reportyear.site.indicator %>% as.data.frame %>% head
+```
+
+```{r TS3, results='markdown', eval=TRUE, fig.width=10, fig.height=10, out.width=690}
+reportyear.site.indicator %>%
+    filter(!is.na(Score)) %>%
+    ggplot(aes(y=Score, x=lubridate::date_decimal(ReportYear))) +
+    geom_linerange(aes(ymin=Lower, ymax=Upper)) +
+    geom_line() + 
+    geom_point(aes(color=Grade), size=3) +
+    scale_color_manual(breaks=LETTERS[1:5], values=RC_reportCardColors, limits=LETTERS[1:5]) +
+    scale_x_datetime('Report Year') +
+    scale_y_continuous(limits=c(0,1)) +
+    facet_grid(Zone+Site~Indicator, space='free') +
+    theme_classic(10) +
+    theme(plot.margin=unit(c(0,0,0,0),'lines'),
+          axis.ticks.length=unit(0.1,'lines'),
+          panel.background=element_rect(color='black', fill=NA))
+```
+
+
+## Aggregate over Sites within ReportYear/Zone/Indicator
+
+```{r L4, engine='tikz',results='markdown', eval=TRUE, echo=FALSE, out.width=600}
+\usetikzlibrary{calc}
+\tt
+\begin{tikzpicture}
+\node [draw] (L1) {ReportYear $\vert$ Month $\vert$ Zone $\vert$ Site $\vert$ Component $\vert$ Indicator $\vert$ Subindicator $\vert$ Measure};
+\node [anchor=north west, draw] at ($(L1.south west) +(0,-1cm)$) (L2) {ReportYear $\vert$ Zone $\vert$ Site $\vert$ Component $\vert$ Indicator $\vert$ Subindicator $\vert$ Measure};
+\draw [->, thick] (L1.south) -- ($(L1.south |- L2.north)$);
+\node [anchor=north west, draw] at ($(L2.south west) +(0,-1cm)$) (L3) {ReportYear $\vert$ Zone $\vert$ Site $\vert$ Component $\vert$ Indicator $\vert$ Subindicator};
+\draw [->, thick] (L2.south) -- ($(L2.south |- L3.north)$);
+\node [anchor=north west, draw] at ($(L3.south west) +(0,-1cm)$) (L4) {ReportYear $\vert$ Zone $\vert$ Site $\vert$ Component $\vert$ Indicator};
+\draw [->, thick] (L3.south) -- ($(L3.south |- L4.north)$);
+\node [anchor=north west, draw] at ($(L4.south west) +(0,-1cm)$) (L5) {ReportYear $\vert$ Zone $\vert$ Component $\vert$ Indicator};
+\draw [->, thick] (L4.south) -- ($(L4.south |- L5.north)$);
+\end{tikzpicture}
+```
+
+```{r AggReportYear_Zone_Indicator.simple, results='markdown', eval=TRUE, tidy='styler'}
+reportyear.zone.indicator = reportyear.site.indicator %>% 
+    mutate(Weight=1) %>% 
+    RC_aggregate(grouping_cols=c('ReportYear','Zone','Component',
+                                 'Indicator'))
+reportyear.zone.indicator %>% as.data.frame %>% head
+```
+
+```{r AggReportYear_Zone_Indicator.boot, cache=TRUE, results='markdown', eval=TRUE, tidy='styler', tidy.opts=list(scope='spaces')}
+reportyear.zone.indicator.boot = reportyear.site.indicator.boot$dist %>% 
+    mutate(Weight=1) %>% 
+    RC_boot_aggregate(seed=123, size=100,
+                      grouping_cols=c('ReportYear', 'Zone', 'Component', 'Indicator'),
+                      over='Site')
+reportyear.zone.indicator.boot$sum %>% as.data.frame %>% head
+```
+
+```{r AggReportYear_Zone_Indicator, results='markdown', eval=TRUE, tidy='styler'}
+reportyear.zone.indicator = reportyear.zone.indicator %>% 
+    full_join(reportyear.zone.indicator.boot$sum)
+reportyear.zone.indicator %>% as.data.frame %>% head 
+```
+
+```{r TS4, results='markdown', eval=TRUE, fig.width=10, fig.height=5, out.width=690}
+reportyear.zone.indicator %>%
+    filter(!is.na(Score)) %>%
+    ggplot(aes(y=Score, x=lubridate::date_decimal(ReportYear))) +
+    geom_linerange(aes(ymin=Lower, ymax=Upper)) +
+    geom_line() + 
+    geom_point(aes(color=Grade), size=3) +
+    scale_color_manual(breaks=LETTERS[1:5], values=RC_reportCardColors, limits=LETTERS[1:5]) +
+    scale_x_datetime('Report Year') +
+    scale_y_continuous(limits=c(0,1)) +
+    facet_grid(Zone~Indicator, space='free') +
+    theme_classic(10) +
+    theme(plot.margin=unit(c(0,0,0,0),'lines'),
+          axis.ticks.length=unit(0.1,'lines'),
+          panel.background=element_rect(color='black', fill=NA))
+```
+
+## Aggregate over Zones within ReportYear/Indicator
+
+```{r L5, engine='tikz',results='markdown', eval=TRUE, echo=FALSE, out.width=600}
+\usetikzlibrary{calc}
+\tt
+\begin{tikzpicture}
+\node [draw] (L1) {ReportYear $\vert$ Month $\vert$ Zone $\vert$ Site $\vert$ Component $\vert$ Indicator $\vert$ Subindicator $\vert$ Measure};
+\node [anchor=north west, draw] at ($(L1.south west) +(0,-1cm)$) (L2) {ReportYear $\vert$ Zone $\vert$ Site $\vert$ Component $\vert$ Indicator $\vert$ Subindicator $\vert$ Measure};
+\draw [->, thick] (L1.south) -- ($(L1.south |- L2.north)$);
+\node [anchor=north west, draw] at ($(L2.south west) +(0,-1cm)$) (L3) {ReportYear $\vert$ Zone $\vert$ Site $\vert$ Component $\vert$ Indicator $\vert$ Subindicator};
+\draw [->, thick] (L2.south) -- ($(L2.south |- L3.north)$);
+\node [anchor=north west, draw] at ($(L3.south west) +(0,-1cm)$) (L4) {ReportYear $\vert$ Zone $\vert$ Site $\vert$ Component $\vert$ Indicator};
+\draw [->, thick] (L3.south) -- ($(L3.south |- L4.north)$);
+\node [anchor=north west, draw] at ($(L4.south west) +(0,-1cm)$) (L5) {ReportYear $\vert$ Zone $\vert$ Component $\vert$ Indicator};
+\draw [->, thick] (L4.south) -- ($(L4.south |- L5.north)$);
+\node [anchor=north west, draw] at ($(L5.south west) +(0,-1cm)$) (L6) {ReportYear $\vert$ Component $\vert$ Indicator};
+\draw [->, thick] (L5.south) -- ($(L5.south |- L6.north)$);
+\end{tikzpicture}
+```
+
+```{r AggReportYear_Region_Indicator.simple, results='markdown', eval=TRUE, tidy='styler'}
+reportyear.region.indicator = reportyear.site.indicator %>% 
+    mutate(Weight=1) %>% 
+    RC_aggregate(grouping_cols=c('ReportYear','Component', 'Indicator'))
+reportyear.region.indicator %>% as.data.frame %>% head
+```
+
+```{r AggReportYear_Region_Indicator.boot, cache=TRUE, results='markdown', eval=TRUE, tidy='styler', tidy.opts=list(scope='spaces')}
+reportyear.region.indicator.boot = reportyear.site.indicator.boot$dist %>% 
+    mutate(Weight=1) %>% 
+    RC_boot_aggregate(seed=123, size=100,
+                      grouping_cols=c('ReportYear', 'Component', 'Indicator'),
+                      over='Zone')
+reportyear.region.indicator.boot$sum %>% as.data.frame %>% head
+```
+
+```{r AggReportYear_Region_Indicator, results='markdown', eval=TRUE, tidy='styler'}
+reportyear.region.indicator = reportyear.region.indicator %>% 
+    full_join(reportyear.region.indicator.boot$sum)
+reportyear.region.indicator %>% as.data.frame %>% head 
+```
+
+```{r TS5, results='markdown', eval=TRUE, fig.width=6, fig.height=3, out.width=690}
+reportyear.region.indicator %>%
+    filter(!is.na(Score)) %>%
+    ggplot(aes(y=Score, x=lubridate::date_decimal(ReportYear))) +
+    geom_linerange(aes(ymin=Lower, ymax=Upper)) +
+    geom_line() + 
+    geom_point(aes(color=Grade), size=3) +
+    scale_color_manual(breaks=LETTERS[1:5], values=RC_reportCardColors, limits=LETTERS[1:5]) +
+    scale_x_datetime('Report Year') +
+    scale_y_continuous(limits=c(0,1)) +
+    facet_grid(.~Indicator, space='free') +
+    theme_classic(10) +
+    theme(plot.margin=unit(c(0,0,0,0),'lines'),
+          axis.ticks.length=unit(0.1,'lines'),
+          panel.background=element_rect(color='black', fill=NA))
+```
+
+
+That concludes this vignette.  We hope you found it useful.

@@ -1,0 +1,23 @@
+Package: reportcards
+Type: Package
+Title: An Implementation of Ecological Report Cards
+Version: 0.1.0
+Authors@R: person("Murray", "Logan", email = "m.logan@aims.gov.au", role = c("aut","cre"))
+Description: Functions to support QAQC plots, index generation, hierarchical aggregation and
+    grade conversions to support Ecological Report Cards.
+Import:
+    dplyr (>= 0.8.0.1),
+    ggplot2,
+    scales,
+    lubridate
+VignetteBuilder: knitr
+License: GPL-3
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 6.1.1
+Suggests: 
+    knitr,
+    rmarkdown,
+    testthat,
+	formatR,
+	styler

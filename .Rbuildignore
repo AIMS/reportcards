@@ -1,0 +1,9 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^data-raw$
+^notes.org$
+^R/prepare.R$
+^R/qaqc.R$
+^Makefile$
+^reportcards.Rproj$
+~

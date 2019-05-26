@@ -1,0 +1,9 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*~
+notes.org
+inst/doc
+.log
+reportcards.Rproj
