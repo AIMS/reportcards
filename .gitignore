@@ -7,3 +7,5 @@ notes.org
 inst/doc
 .log
 reportcards.Rproj
+vignettes/*.R
+README.html
