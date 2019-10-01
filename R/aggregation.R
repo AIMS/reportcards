@@ -201,13 +201,13 @@ RC_boot_accumulate = function(boot=NULL, size=10, seed=123,
             x = .
             xx=replicate(n=size, sample(x$Score, prob=x$Weight, replace=TRUE))
             if (is.null(dim(xx))) data.frame(Score=rep(x$Score, size))
-            else data.frame(Score=colMeans(xx))
+            else data.frame(Score=colMeans(xx,na.rm=TRUE))
         }) %>% ungroup
     x3 = x2 %>%
         group_by(.dots=grouping_cols) %>%
         summarize(Lower=quantile(Score, p=0.025, na.rm=TRUE),
                   Upper=quantile(Score, p=0.975, na.rm=TRUE),
-                  Boot.mean=mean(Score)) %>%
+                  Boot.mean=mean(Score,na.rm=TRUE)) %>%
         ungroup
     list(dist=x2, sum=x3)
 }
